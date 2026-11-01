@@ -1,0 +1,69 @@
+name: Build Apple TV IPA (tvOS)
+
+on:
+  workflow_dispatch: # 支持网页端一键手动触发
+
+jobs:
+  build-tvos:
+    name: Build OrionTV tvOS IPA
+    runs-on: macos-14 # 使用 GitHub 免费提供的最新苹果 M 系列云端主机
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "yarn"
+
+      - name: Install Dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Prebuild tvOS Native Project
+        run: |
+          EXPO_TV=1 EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo prebuild --platform ios --clean
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install
+
+      - name: Build tvOS Archive (Unsigned)
+        run: |
+          cd ios
+          # 自动列出并匹配 tvOS 的 Scheme
+          SCHEME=$(xcodebuild -workspace OrionTV.xcworkspace -list | grep -i "tvOS" | head -n 1 | tr -d ' ')
+          if [ -z "$SCHEME" ]; then
+            SCHEME="OrionTV"
+          fi
+          echo "Selected Scheme: $SCHEME"
+
+          # 编译生成 tvOS Release Archive
+          xcodebuild -workspace OrionTV.xcworkspace \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=tvOS" \
+            -archivePath build/OrionTV.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            archive
+
+      - name: Package to IPA
+        run: |
+          cd ios
+          mkdir -p Payload
+          # 拷贝编译出的 .app 到 Payload 文件夹
+          cp -r build/OrionTV.xcarchive/Products/Applications/*.app Payload/
+          # 打包为通用免签 IPA
+          zip -r OrionTV-tvOS.ipa Payload
+          mkdir -p ../artifacts
+          mv OrionTV-tvOS.ipa ../artifacts/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrionTV-tvOS-IPA
+          path: artifacts/OrionTV-tvOS.ipa
